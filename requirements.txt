@@ -1,0 +1,14 @@
+jupyterlab
+pandas
+matplotlib
+scipy
+sacremoses
+subword_nmt
+gTTS
+pytube
+moviepy
+youtube_transcript_api
+openai-whisper
+torch
+flask
+streamlit

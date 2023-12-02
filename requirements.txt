@@ -12,3 +12,9 @@ openai-whisper
 torch
 flask
 streamlit
+requests
+hydra-core
+omegaconf
+bitarray
+scikit-learn
+sacrebleu

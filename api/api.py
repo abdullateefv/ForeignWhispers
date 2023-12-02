@@ -6,14 +6,14 @@ import os
 import whisper
 import torch
 from gtts import gTTS
+import json
 
 app = Flask(__name__)
 model = whisper.load_model("base")
 
 def translate_text(text, target_lang):
     # Load the target language model dynamically
-    target_model = torch.hub.load('pytorch/fairseq', f'transformer.wmt16.en-{target_lang}', tokenizer='moses',
-                                  bpe='subword_nmt')
+    target_model = torch.hub.load('pytorch/fairseq', f'transformer.wmt16.en-{target_lang}', tokenizer='moses',bpe='subword_nmt')
     target_model.eval()
     target_model.cuda()
 
@@ -34,6 +34,32 @@ def process_srt(data, target_lang):
         translated_data.append(translated_item)
     return translated_data
 
+@app.route('/translate', methods=['GET'])
+def translate():
+    base_filename = request.args.get('base_filename')
+    target_lang = request.args.get('target_lang')
+
+    transcript_path = os.path.join('transcripts', f'{base_filename}.srt')
+    translated_transcript_path = os.path.join('translatedTranscripts', f'{base_filename}.{target_lang}.translated.srt')
+
+
+    # Read the transcript file
+    with open(transcript_path, 'r') as file:
+        data = json.load(file)
+
+    # Process and translate the data
+    translated_data = process_srt(data, target_lang)
+
+    # Write the translated transcripts to a file
+    with open(translated_transcript_path, "w") as transcript_file:
+        for item in translated_data:
+            transcript_file.write(f"{item['text']}\n")  # Adjust the format as needed for .srt files
+
+
+    return jsonify({
+        'translatedTranscriptPath': translated_transcript_path,
+    })
+
 @app.route('/downloadVideo', methods=['GET'])
 def download_video():
     # Get URL arg
@@ -50,92 +76,59 @@ def download_video():
 
     # Set up paths
     base_path = os.path.dirname(os.path.abspath(__file__))
-    video_file_path = video.download(output_path=os.path.join(base_path, '../cs370-project/api/videos'))
+    video_file_path = video.download(output_path=os.path.join(base_path, 'videos'))
 
-    # Define the path for the caption file in the 'transcripts' directory
     caption_file_name = os.path.basename(video_file_path)[:-4]
-    caption_file_path = os.path.join(base_path, '../cs370-project/api/transcripts', caption_file_name)
+    caption_file_path = os.path.join(base_path, 'transcripts', caption_file_name)
 
-    # Download transcripts
-    srt = YouTubeTranscriptApi.get_transcript(request.args.get('url')[-11:])
+    try:
+        srt = YouTubeTranscriptApi.get_transcript(request.args.get('url')[-11:])
+        transcript_content = str(srt)
+        transcript_available = True
+    except Exception as e:
+        transcript_content = "Unavailable"
+        transcript_available = False
+
+    # Write to the caption file
     with open(caption_file_path + '.srt', 'w') as file:
-        file.write(str(srt))
+        file.write(transcript_content)
 
     # Return download file paths
     return jsonify({
+        'video_name': caption_file_name,
         'video_path': video_file_path,
-        'caption_path': caption_file_path + ".srt"
+        'caption_path': caption_file_path + ".srt",
+        'transcript_available': transcript_available
     })
 
-@app.route('/whisperTranscribe', methods=['POST'])
-def whisper_transcribe():
-    # Get URL arg
-    mp4Name = request.args.get('mp4Name')
+@app.route('/whisperTranscribe', methods=['GET'])
+def transcribe():
+    # Get the base filename from request
+    base_filename = request.args.get('mp4Name')
 
-    if not mp4Name:
-        return jsonify({'error': 'mp4Name is required'}), 400
+    # Define file paths
+    video_path = os.path.join('videos', f'{base_filename}.mp4')
+    audio_path = os.path.join('audios', f'{base_filename}.mp3')
+    transcript_path = os.path.join('whisperTranscripts', f'{base_filename}.txt')
 
-    # Construct mp4 path
-    mp4_path = os.path.join('videos', f"{mp4Name}.mp4")
+    # Check if the video file exists
+    if not os.path.exists(video_path):
+        return jsonify({"error": "File not found"}), 404
 
-    # Check if mp4 file exists
-    if not os.path.exists(mp4_path):
-        return jsonify({'error': 'mp4 file does not exist'}), 404
+    # Convert video to audio
+    clip = VideoFileClip(video_path)
+    clip.audio.write_audiofile(audio_path)
 
-    # Construct mp3 path
-    audio_path = os.path.join('audios', f"{mp4Name}.mp3")
+    # Transcribe the audio file
+    model = whisper.load_model("base")  # You may choose a different model size
+    result = model.transcribe(audio_path)
 
-    # Convert mp4 to mp3 and transcribe
-    try:
-        video_clip = VideoFileClip(mp4_path)
-        video_clip.audio.write_audiofile(audio_path)
-        video_clip.close()
+    # Save the transcript
+    with open(transcript_path, 'w') as file:
+        file.write(result["text"])
 
-        # Transcribe the audio file
-        result = model.transcribe(audio_path)
-
-        # Path for the transcripts file
-        transcript_path = os.path.join('whisperTranscripts', f"{mp4Name}.txt")
-
-        # Write the transcripts to a file
-        with open(transcript_path, "w") as transcript_file:
-            transcript_file.write(result["text"])
-
-    except Exception as e:
-        # Handle the exception and return an error message
-        return jsonify({'error': str(e)}), 500
-
-    # Return the path to the transcripts file
-    return jsonify({
-        'whisperTranscript_path': transcript_path,
-    })
-
-# POST /translate?transcription=:transciptionName&target_lang=targetLanguage
-@app.route('/translate', methods=['POST'])
-def translate_text():
-    transcription = request.args.get('transcription')
-    target_lang = request.args.get('target_lang')
-
-    try:
-        data = transcription.get_json()
-
-        # Process the provided .srt-like data
-        translated_data = process_srt(data, target_lang)
-
-        # Save the translated data to a new .srt file
-        translated_transcript_path = os.path.join('translatedTranscripts',
-                                                  '{transcription}.{target_lang}.translated.srt')
-
-        # Write the translated transcripts to a file
-        with open(translated_transcript_path, "w") as transcript_file:
-            transcript_file.write(translated_data)
-
-    except Exception as e:
-        return jsonify({'error': str(e)})
-
-    return jsonify({
-        'translatedTranscripts_path': translated_transcript_path,
-    })
+    # Return the path of the transcribed file
+    return jsonify({"transcript_path": transcript_path})
 
 @app.route('/text-to-speech', methods=['POST'])
 def text_to_speech():
@@ -171,4 +164,4 @@ def text_to_speech():
     })
 
 if __name__ == "__main__":
-    app.run()
+    app.run(port=7864, debug=True)

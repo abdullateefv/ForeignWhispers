@@ -3,6 +3,8 @@ Full-Stack Streamlit UI / Flask API Application that uses Whisper ML and Google 
 
 # HuggingFace Demo Space
 **[Try it](https://abdullateefv-foreignwhispers.hf.space)**
+
+
 [![Hugging Face Space](images/demo.PNG)](https://abdullateefv-foreignwhispers.hf.space)
 
 # API Flow Diagram
